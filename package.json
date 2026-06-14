@@ -4,7 +4,8 @@
   "private": true,
   "description": "AI PM 技术评估训练工作台 H5 MVP",
   "scripts": {
-    "start": "python3 -m http.server 5173",
-    "dev": "python3 -m http.server 5173"
+    "start": "node server/server.mjs",
+    "dev": "node server/server.mjs",
+    "static": "python3 -m http.server 5173"
   }
 }

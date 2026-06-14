@@ -6,7 +6,21 @@
 
 ## MVP 本地运行方式
 
-当前已实现第一版静态网页 / H5 MVP，无登录、无后端、无数据库。
+当前已实现第一版网页 / H5 MVP，无登录、无数据库。JD 技术要求翻译已接入本地 Node 后端，后端通过 DeepSeek OpenAI-compatible Chat API 做一次性 Agent 分析；如果后端或 API Key 不可用，前端会自动回退到本地规则版结果。
+
+首次使用前，在项目根目录创建 `.env`：
+
+```bash
+cp .env.example .env
+```
+
+然后填入本机 DeepSeek Key：
+
+```text
+DEEPSEEK_API_KEY=你的 key
+DEEPSEEK_MODEL=deepseek-v4-flash
+PORT=5173
+```
 
 启动方式：
 
@@ -20,7 +34,11 @@ npm start
 http://localhost:5173
 ```
 
-也可以直接打开 `index.html` 预览。推荐使用本地服务方式，便于后续部署到 Vercel、Cloudflare Pages 或 Netlify。
+如需只看静态版本，可以运行：
+
+```bash
+npm run static
+```
 
 当前 MVP 已覆盖：
 
@@ -28,13 +46,13 @@ http://localhost:5173
 - 能力自测与规则计分。
 - 自测结果与推荐训练任务。
 - 10 个静态训练任务列表与详情。
-- JD 技术要求规则翻译。
+- JD 技术要求 Agent 翻译，失败时自动回退到规则版。
 - 作品提交表单校验。
 - 提交成功后的 Rubric 结构、自查建议和面试追问示例。
 
 当前仍为模拟或半人工：
 
-- JD 翻译使用关键词规则和模板，不调用 AI。
+- JD 翻译第一阶段为一次性返回，暂未做流式输出。
 - 作品评分只展示待人工点评状态和 Rubric 结构，不假装自动精准评分。
 - 页面状态只保存在当前浏览器会话中，刷新后可能丢失。
 

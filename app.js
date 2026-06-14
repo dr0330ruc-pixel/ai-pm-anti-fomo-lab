@@ -15,7 +15,9 @@ const state = {
     identity: "校招生",
     direction: "RAG",
     result: null,
-    error: ""
+    error: "",
+    loading: false,
+    source: ""
   },
   work: {
     taskId: "T01",
@@ -588,14 +590,20 @@ function submitAssessment() {
   setRoute("result");
 }
 
-function generateJdResult() {
-  state.jd.error = "";
-  if (state.jd.text.trim().length < 20) {
-    state.jd.error = "请至少粘贴一段包含岗位要求或技术要求的 JD 文本。";
-    state.jd.result = null;
-    render();
-    return;
+function getBrowserSessionId() {
+  const key = "ai-pm-workbench-session-id";
+  try {
+    const existing = window.localStorage.getItem(key);
+    if (existing) return existing;
+    const generated = crypto.randomUUID ? crypto.randomUUID() : `session-${Date.now()}`;
+    window.localStorage.setItem(key, generated);
+    return generated;
+  } catch {
+    return `session-${Date.now()}`;
   }
+}
+
+function generateJdResultFallback(message = "") {
   const text = state.jd.text.toLowerCase();
   const matched = jdKeywords.filter((item) =>
     item.aliases.some((alias) => text.includes(alias.toLowerCase()))
@@ -605,12 +613,63 @@ function generateJdResult() {
   state.jd.result = {
     keywords,
     primaryTask,
+    primaryTaskId: primaryTask.id,
     profile: `这段 JD 通常不只是要求你知道技术名词，也要求你能把 ${keywords
       .map((item) => item.key)
       .join("、")} 拆成场景、数据、评估、失败兜底和协作边界。该结果只基于你粘贴的文本和公开通用知识，不代表公司内部面试标准。`,
-    gap: `你需要补一份能证明“评估方法 + 技术边界 + 失败复盘”的作品。最小作品可以从「${primaryTask.title}」开始。`
+    gap: `你需要补一份能证明“评估方法 + 技术边界 + 失败复盘”的作品。最小作品可以从「${primaryTask.title}」开始。`,
+    interviewQuestions: [
+      "你如何判断一次错误回答是检索问题、生成问题还是业务规则问题？",
+      "你会如何构造一个小型评估集？",
+      "如果准确率提高但回答速度变慢，你会怎么取舍？",
+      "用户反馈“不可信”时，你会改产品流程还是改模型策略？"
+    ],
+    sevenDayPlan: `第 1-2 天拆 JD 关键词和场景；第 3-4 天完成「${primaryTask.title}」的最小交付；第 5 天补失败 case 和兜底策略；第 6-7 天整理成面试可讲的作品片段。`
   };
+  state.jd.source = "fallback";
+  state.jd.error = message || "当前使用本地规则版结果。";
+}
+
+async function generateJdResult() {
+  state.jd.error = "";
+  if (state.jd.text.trim().length < 20) {
+    state.jd.error = "请至少粘贴一段包含岗位要求或技术要求的 JD 文本。";
+    state.jd.result = null;
+    state.jd.source = "";
+    render();
+    return;
+  }
+  state.jd.loading = true;
+  state.jd.source = "";
   render();
+  try {
+    const response = await fetch("/api/jd-analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: getBrowserSessionId(),
+        jdText: state.jd.text,
+        identity: state.jd.identity,
+        direction: state.jd.direction
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "JD 分析服务暂时不可用。");
+    const primaryTask = taskById(payload.primaryTaskId || payload.keywords?.[0]?.task);
+    state.jd.result = {
+      ...payload,
+      primaryTask,
+      primaryTaskId: primaryTask.id
+    };
+    state.jd.source = "agent";
+    state.jd.error = "";
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "JD 分析服务暂时不可用。";
+    generateJdResultFallback(`Agent 后端暂不可用，已切换为本地规则版结果。原因：${detail}`);
+  } finally {
+    state.jd.loading = false;
+    render();
+  }
 }
 
 function submitWork() {
@@ -1038,8 +1097,8 @@ function renderJdTab() {
           </div>
         </div>
         <div class="button-row">
-          <button class="btn primary" data-action="generate-jd">生成翻译结果</button>
-          <button class="btn secondary" data-action="fill-sample-jd">填入示例 JD</button>
+          <button class="btn primary" data-action="generate-jd" ${state.jd.loading ? "disabled" : ""}>${state.jd.loading ? "分析中..." : "生成翻译结果"}</button>
+          <button class="btn secondary" data-action="fill-sample-jd" ${state.jd.loading ? "disabled" : ""}>填入示例 JD</button>
         </div>
         <p class="muted">风险提示：第一版不自动抓取招聘网站，不保存 JD。不要粘贴公司未公开项目、面试题或内部资料。</p>
       </div>
@@ -1052,18 +1111,31 @@ function renderJdTab() {
 
 function renderJdResult() {
   const result = state.jd.result;
+  const primaryTask = result.primaryTask || taskById(result.primaryTaskId || result.keywords?.[0]?.task);
+  const interviewQuestions = result.interviewQuestions?.length
+    ? result.interviewQuestions
+    : [
+      "你如何判断一次错误回答是检索问题、生成问题还是业务规则问题？",
+      "你会如何构造一个小型评估集？",
+      "如果准确率提高但回答速度变慢，你会怎么取舍？",
+      "用户反馈“不可信”时，你会改产品流程还是改模型策略？"
+    ];
+  const sevenDayPlan = result.sevenDayPlan || `主任务：${primaryTask.id} ${primaryTask.title}。轻量动作：找一个公开帮助中心或产品文档，手工写 10 个用户问题，并标注每个问题需要引用的资料来源。`;
   return `
     <article class="notice">
-      <h2>岗位能力画像</h2>
-      <p>${result.profile}</p>
+      <div class="section-header compact">
+        <h2>岗位能力画像</h2>
+        ${state.jd.source ? `<span class="tag ${state.jd.source === "agent" ? "ok" : "warn"}">${state.jd.source === "agent" ? "Agent 结果" : "规则版兜底"}</span>` : ""}
+      </div>
+      <p>${escapeHtml(result.profile)}</p>
       <h3>技术关键词解释</h3>
       <div class="rubric-table">
         ${result.keywords
           .map(
             (item) => `
               <div class="rubric-row">
-                <strong>${item.key}</strong>
-                <span>${item.meaning}</span>
+                <strong>${escapeHtml(item.key)}</strong>
+                <span>${escapeHtml(item.meaning)}</span>
               </div>
             `
           )
@@ -1071,17 +1143,14 @@ function renderJdResult() {
       </div>
       <h3 class="section">可能追问方向</h3>
       <ul>
-        <li>你如何判断一次错误回答是检索问题、生成问题还是业务规则问题？</li>
-        <li>你会如何构造一个小型评估集？</li>
-        <li>如果准确率提高但回答速度变慢，你会怎么取舍？</li>
-        <li>用户反馈“不可信”时，你会改产品流程还是改模型策略？</li>
+        ${interviewQuestions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
       </ul>
       <h3>作品集缺口</h3>
-      <p>${result.gap}</p>
+      <p>${escapeHtml(result.gap)}</p>
       <h3>7 天补位任务建议</h3>
-      <p>主任务：${result.primaryTask.id} ${result.primaryTask.title}。轻量动作：找一个公开帮助中心或产品文档，手工写 10 个用户问题，并标注每个问题需要引用的资料来源。</p>
+      <p>${escapeHtml(sevenDayPlan)}</p>
       <div class="button-row">
-        <button class="btn primary" data-action="route" data-route="tasks" data-task="${result.primaryTask.id}">选择推荐任务</button>
+        <button class="btn primary" data-action="route" data-route="tasks" data-task="${primaryTask.id}">选择推荐任务</button>
         <button class="btn secondary" data-action="tab" data-tab="work">去提交作品</button>
       </div>
     </article>
